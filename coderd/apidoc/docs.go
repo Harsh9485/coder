@@ -85,7 +85,7 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/experimental/aibridge/interceptions": {
+        "/aibridge/interceptions": {
             "get": {
                 "security": [
                     {
@@ -11668,11 +11668,34 @@ const docTemplate = `{
                 }
             }
         },
+        "codersdk.AIBridgeBedrockConfig": {
+            "type": "object",
+            "properties": {
+                "access_key": {
+                    "type": "string"
+                },
+                "access_key_secret": {
+                    "type": "string"
+                },
+                "model": {
+                    "type": "string"
+                },
+                "region": {
+                    "type": "string"
+                },
+                "small_fast_model": {
+                    "type": "string"
+                }
+            }
+        },
         "codersdk.AIBridgeConfig": {
             "type": "object",
             "properties": {
                 "anthropic": {
                     "$ref": "#/definitions/codersdk.AIBridgeAnthropicConfig"
+                },
+                "bedrock": {
+                    "$ref": "#/definitions/codersdk.AIBridgeBedrockConfig"
                 },
                 "enabled": {
                     "type": "boolean"
@@ -11685,6 +11708,10 @@ const docTemplate = `{
         "codersdk.AIBridgeInterception": {
             "type": "object",
             "properties": {
+                "ended_at": {
+                    "type": "string",
+                    "format": "date-time"
+                },
                 "id": {
                     "type": "string",
                     "format": "uuid"
@@ -12495,6 +12522,13 @@ const docTemplate = `{
                 "organization_id": {
                     "type": "string",
                     "format": "uuid"
+                },
+                "organization_member_permissions": {
+                    "description": "OrganizationMemberPermissions are specific for the organization in the field 'OrganizationID' above.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/codersdk.Permission"
+                    }
                 },
                 "organization_permissions": {
                     "description": "OrganizationPermissions are specific for the organization in the field 'OrganizationID' above.",
@@ -13719,6 +13753,13 @@ const docTemplate = `{
                 "name": {
                     "type": "string"
                 },
+                "organization_member_permissions": {
+                    "description": "OrganizationMemberPermissions are specific to the organization the role belongs to.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/codersdk.Permission"
+                    }
+                },
                 "organization_permissions": {
                     "description": "OrganizationPermissions are specific to the organization the role belongs to.",
                     "type": "array",
@@ -14275,11 +14316,9 @@ const docTemplate = `{
                 "web-push",
                 "oauth2",
                 "mcp-server-http",
-                "workspace-sharing",
-                "aibridge"
+                "workspace-sharing"
             ],
             "x-enum-comments": {
-                "ExperimentAIBridge": "Enables AI Bridge functionality.",
                 "ExperimentAutoFillParameters": "This should not be taken out of experiments until we have redesigned the feature.",
                 "ExperimentExample": "This isn't used for anything.",
                 "ExperimentMCPServerHTTP": "Enables the MCP HTTP server functionality.",
@@ -14297,8 +14336,7 @@ const docTemplate = `{
                 "ExperimentWebPush",
                 "ExperimentOAuth2",
                 "ExperimentMCPServerHTTP",
-                "ExperimentWorkspaceSharing",
-                "ExperimentAIBridge"
+                "ExperimentWorkspaceSharing"
             ]
         },
         "codersdk.ExternalAPIKeyScopes": {
@@ -15396,6 +15434,9 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                },
+                "revocation_endpoint": {
+                    "type": "string"
                 },
                 "scopes_supported": {
                     "type": "array",
@@ -17485,6 +17526,13 @@ const docTemplate = `{
                 "organization_id": {
                     "type": "string",
                     "format": "uuid"
+                },
+                "organization_member_permissions": {
+                    "description": "OrganizationMemberPermissions are specific for the organization in the field 'OrganizationID' above.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/codersdk.Permission"
+                    }
                 },
                 "organization_permissions": {
                     "description": "OrganizationPermissions are specific for the organization in the field 'OrganizationID' above.",
@@ -19667,6 +19715,14 @@ const docTemplate = `{
                     "description": "OwnerName is the username of the owner of the workspace.",
                     "type": "string"
                 },
+                "task_id": {
+                    "description": "TaskID, if set, indicates that the workspace is relevant to the given codersdk.Task.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/uuid.NullUUID"
+                        }
+                    ]
+                },
                 "template_active_version_id": {
                     "type": "string",
                     "format": "uuid"
@@ -20473,11 +20529,6 @@ const docTemplate = `{
         "codersdk.WorkspaceBuild": {
             "type": "object",
             "properties": {
-                "ai_task_sidebar_app_id": {
-                    "description": "Deprecated: This field has been replaced with ` + "`" + `TaskAppID` + "`" + `",
-                    "type": "string",
-                    "format": "uuid"
-                },
                 "build_number": {
                     "type": "integer"
                 },
@@ -20555,10 +20606,6 @@ const docTemplate = `{
                             "$ref": "#/definitions/codersdk.WorkspaceStatus"
                         }
                     ]
-                },
-                "task_app_id": {
-                    "type": "string",
-                    "format": "uuid"
                 },
                 "template_version_id": {
                     "type": "string",

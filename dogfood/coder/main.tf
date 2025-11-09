@@ -2,7 +2,7 @@ terraform {
   required_providers {
     coder = {
       source  = "coder/coder"
-      version = ">= 2.12.0"
+      version = ">= 2.13.0"
     }
     docker = {
       source  = "kreuzwerker/docker"
@@ -31,14 +31,12 @@ locals {
     // actually in Germany now.
     "eu-helsinki" = "tcp://katerose-fsn-cdr-dev.tailscale.svc.cluster.local:2375"
     "ap-sydney"   = "tcp://wolfgang-syd-cdr-dev.tailscale.svc.cluster.local:2375"
-    "sa-saopaulo" = "tcp://oberstein-sao-cdr-dev.tailscale.svc.cluster.local:2375"
     "za-cpt"      = "tcp://schonkopf-cpt-cdr-dev.tailscale.svc.cluster.local:2375"
   }
 
   repo_base_dir  = data.coder_parameter.repo_base_dir.value == "~" ? "/home/coder" : replace(data.coder_parameter.repo_base_dir.value, "/^~\\//", "/home/coder/")
   repo_dir       = replace(try(module.git-clone[0].repo_dir, ""), "/^~\\//", "/home/coder/")
   container_name = "coder-${data.coder_workspace_owner.me.name}-${lower(data.coder_workspace.me.name)}"
-  has_ai_prompt  = data.coder_parameter.ai_prompt.value != ""
 }
 
 data "coder_workspace_preset" "cpt" {
@@ -109,23 +107,6 @@ data "coder_workspace_preset" "sydney" {
   }
 }
 
-data "coder_workspace_preset" "saopaulo" {
-  name        = "São Paulo"
-  description = "Development workspace hosted in Brazil with 1 prebuild instance"
-  icon        = "/emojis/1f1e7-1f1f7.png"
-  parameters = {
-    (data.coder_parameter.region.name)                   = "sa-saopaulo"
-    (data.coder_parameter.image_type.name)               = "codercom/oss-dogfood:latest"
-    (data.coder_parameter.repo_base_dir.name)            = "~"
-    (data.coder_parameter.res_mon_memory_threshold.name) = 80
-    (data.coder_parameter.res_mon_volume_threshold.name) = 90
-    (data.coder_parameter.res_mon_volume_path.name)      = "/home/coder"
-  }
-  prebuilds {
-    instances = 1
-  }
-}
-
 data "coder_parameter" "repo_base_dir" {
   type        = "string"
   name        = "Coder Repository Base Directory"
@@ -157,7 +138,6 @@ locals {
     "north-america" : "us-pittsburgh"
     "europe" : "eu-helsinki"
     "australia" : "ap-sydney"
-    "south-america" : "sa-saopaulo"
     "africa" : "za-cpt"
   }
 
@@ -189,11 +169,6 @@ data "coder_parameter" "region" {
     icon  = "/emojis/1f1e6-1f1fa.png"
     name  = "Sydney"
     value = "ap-sydney"
-  }
-  option {
-    icon  = "/emojis/1f1e7-1f1f7.png"
-    name  = "São Paulo"
-    value = "sa-saopaulo"
   }
   option {
     icon  = "/emojis/1f1ff-1f1e6.png"
@@ -242,14 +217,6 @@ data "coder_parameter" "devcontainer_autostart" {
   mutable     = true
 }
 
-data "coder_parameter" "ai_prompt" {
-  type        = "string"
-  name        = "AI Prompt"
-  default     = ""
-  description = "Prompt for Claude Code"
-  mutable     = true // Workaround for issue with claiming a prebuild from a preset that does not include this parameter.
-}
-
 provider "docker" {
   host = lookup(local.docker_host, data.coder_parameter.region.value)
 }
@@ -262,6 +229,7 @@ data "coder_external_auth" "github" {
 
 data "coder_workspace" "me" {}
 data "coder_workspace_owner" "me" {}
+data "coder_task" "me" {}
 data "coder_workspace_tags" "tags" {
   tags = {
     "cluster" : "dogfood-v2"
@@ -282,11 +250,16 @@ data "coder_parameter" "ide_choices" {
   form_type   = "multi-select"
   mutable     = true
   description = "Choose one or more IDEs to enable in your workspace"
-  default     = jsonencode(["vscode", "code-server", "cursor"])
+  default     = jsonencode(["vscode", "code-server", "cursor", "cmux"])
   option {
     name  = "VS Code Desktop"
     value = "vscode"
     icon  = "/icon/code.svg"
+  }
+  option {
+    name  = "cmux"
+    value = "cmux"
+    icon  = "/icon/cmux.svg"
   }
   option {
     name  = "code-server"
@@ -384,6 +357,14 @@ module "personalize" {
   agent_id = coder_agent.dev.id
 }
 
+module "cmux" {
+  count     = contains(jsondecode(data.coder_parameter.ide_choices.value), "cmux") ? data.coder_workspace.me.start_count : 0
+  source    = "registry.coder.com/coder/cmux/coder"
+  version   = "1.0.0"
+  agent_id  = coder_agent.dev.id
+  subdomain = true
+}
+
 module "code-server" {
   count                   = contains(jsondecode(data.coder_parameter.ide_choices.value), "code-server") ? data.coder_workspace.me.start_count : 0
   source                  = "dev.registry.coder.com/coder/code-server/coder"
@@ -409,12 +390,12 @@ module "vscode-web" {
 module "jetbrains" {
   count         = contains(jsondecode(data.coder_parameter.ide_choices.value), "jetbrains") ? data.coder_workspace.me.start_count : 0
   source        = "dev.registry.coder.com/coder/jetbrains/coder"
-  version       = "1.1.0"
+  version       = "1.1.1"
   agent_id      = coder_agent.dev.id
   agent_name    = "dev"
   folder        = local.repo_dir
   major_version = "latest"
-  tooltip       = "You need to [Install Coder Desktop](https://coder.com/docs/user-guides/desktop#install-coder-desktop) to use this button."
+  tooltip       = "You need to [install JetBrains Toolbox](https://coder.com/docs/user-guides/workspace-access/jetbrains/toolbox) to use this app."
 }
 
 module "filebrowser" {
@@ -451,7 +432,7 @@ module "windsurf" {
 module "zed" {
   count      = contains(jsondecode(data.coder_parameter.ide_choices.value), "zed") ? data.coder_workspace.me.start_count : 0
   source     = "dev.registry.coder.com/coder/zed/coder"
-  version    = "1.1.0"
+  version    = "1.1.1"
   agent_id   = coder_agent.dev.id
   agent_name = "dev"
   folder     = local.repo_dir
@@ -479,7 +460,7 @@ resource "coder_agent" "dev" {
   dir  = local.repo_dir
   env = {
     OIDC_TOKEN : data.coder_workspace_owner.me.oidc_access_token,
-    ANTHROPIC_BASE_URL : "https://dev.coder.com/api/experimental/aibridge/anthropic",
+    ANTHROPIC_BASE_URL : "https://dev.coder.com/api/v2/aibridge/anthropic",
     ANTHROPIC_AUTH_TOKEN : data.coder_workspace_owner.me.session_token
   }
   startup_script_behavior = "blocking"
@@ -814,7 +795,7 @@ resource "coder_metadata" "container_info" {
   }
   item {
     key   = "ai_task"
-    value = local.has_ai_prompt ? "yes" : "no"
+    value = data.coder_task.me.enabled ? "yes" : "no"
   }
 }
 
@@ -848,9 +829,9 @@ locals {
 }
 
 module "claude-code" {
-  count               = local.has_ai_prompt ? data.coder_workspace.me.start_count : 0
+  count               = data.coder_task.me.enabled ? data.coder_workspace.me.start_count : 0
   source              = "dev.registry.coder.com/coder/claude-code/coder"
-  version             = "3.3.1"
+  version             = "4.0.0"
   agent_id            = coder_agent.dev.id
   workdir             = local.repo_dir
   claude_code_version = "latest"
@@ -859,15 +840,20 @@ module "claude-code" {
   agentapi_version    = "latest"
 
   system_prompt       = local.claude_system_prompt
-  ai_prompt           = data.coder_parameter.ai_prompt.value
+  ai_prompt           = data.coder_task.me.prompt
   post_install_script = <<-EOT
     claude mcp add playwright npx -- @playwright/mcp@latest --headless --isolated --no-sandbox
     claude mcp add desktop-commander npx -- @wonderwhy-er/desktop-commander@latest
   EOT
 }
 
+resource "coder_ai_task" "task" {
+  count  = data.coder_task.me.enabled ? data.coder_workspace.me.start_count : 0
+  app_id = module.claude-code[count.index].task_app_id
+}
+
 resource "coder_app" "develop_sh" {
-  count        = local.has_ai_prompt ? data.coder_workspace.me.start_count : 0
+  count        = data.coder_task.me.enabled ? data.coder_workspace.me.start_count : 0
   agent_id     = coder_agent.dev.id
   slug         = "develop-sh"
   display_name = "develop.sh"
@@ -880,7 +866,7 @@ resource "coder_app" "develop_sh" {
 }
 
 resource "coder_script" "develop_sh" {
-  count              = local.has_ai_prompt ? data.coder_workspace.me.start_count : 0
+  count              = data.coder_task.me.enabled ? data.coder_workspace.me.start_count : 0
   display_name       = "develop.sh"
   agent_id           = coder_agent.dev.id
   run_on_start       = true
@@ -903,7 +889,7 @@ resource "coder_script" "develop_sh" {
 }
 
 resource "coder_app" "preview" {
-  count        = local.has_ai_prompt ? data.coder_workspace.me.start_count : 0
+  count        = data.coder_task.me.enabled ? data.coder_workspace.me.start_count : 0
   agent_id     = coder_agent.dev.id
   slug         = "preview"
   display_name = "Preview"

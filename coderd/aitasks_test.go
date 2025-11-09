@@ -2,15 +2,12 @@ package coderd_test
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
-	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -34,128 +31,6 @@ import (
 	"github.com/coder/coder/v2/provisionersdk/proto"
 	"github.com/coder/coder/v2/testutil"
 )
-
-func TestAITasksPrompts(t *testing.T) {
-	t.Parallel()
-
-	t.Run("EmptyBuildIDs", func(t *testing.T) {
-		t.Parallel()
-		client := coderdtest.New(t, &coderdtest.Options{})
-		_ = coderdtest.CreateFirstUser(t, client)
-		experimentalClient := codersdk.NewExperimentalClient(client)
-
-		ctx := testutil.Context(t, testutil.WaitShort)
-
-		// Test with empty build IDs
-		prompts, err := experimentalClient.AITaskPrompts(ctx, []uuid.UUID{})
-		require.NoError(t, err)
-		require.Empty(t, prompts.Prompts)
-	})
-
-	t.Run("MultipleBuilds", func(t *testing.T) {
-		t.Parallel()
-
-		adminClient := coderdtest.New(t, &coderdtest.Options{IncludeProvisionerDaemon: true})
-		first := coderdtest.CreateFirstUser(t, adminClient)
-		memberClient, _ := coderdtest.CreateAnotherUser(t, adminClient, first.OrganizationID)
-
-		ctx := testutil.Context(t, testutil.WaitLong)
-
-		// Create a template with parameters
-		version := coderdtest.CreateTemplateVersion(t, adminClient, first.OrganizationID, &echo.Responses{
-			Parse: echo.ParseComplete,
-			ProvisionPlan: []*proto.Response{{
-				Type: &proto.Response_Plan{
-					Plan: &proto.PlanComplete{
-						Parameters: []*proto.RichParameter{
-							{
-								Name:         "param1",
-								Type:         "string",
-								DefaultValue: "default1",
-							},
-							{
-								Name:         codersdk.AITaskPromptParameterName,
-								Type:         "string",
-								DefaultValue: "default2",
-							},
-						},
-					},
-				},
-			}},
-			ProvisionApply: echo.ApplyComplete,
-		})
-		template := coderdtest.CreateTemplate(t, adminClient, first.OrganizationID, version.ID)
-		coderdtest.AwaitTemplateVersionJobCompleted(t, adminClient, version.ID)
-
-		// Create two workspaces with different parameters
-		workspace1 := coderdtest.CreateWorkspace(t, memberClient, template.ID, func(request *codersdk.CreateWorkspaceRequest) {
-			request.RichParameterValues = []codersdk.WorkspaceBuildParameter{
-				{Name: "param1", Value: "value1a"},
-				{Name: codersdk.AITaskPromptParameterName, Value: "value2a"},
-			}
-		})
-		coderdtest.AwaitWorkspaceBuildJobCompleted(t, memberClient, workspace1.LatestBuild.ID)
-
-		workspace2 := coderdtest.CreateWorkspace(t, memberClient, template.ID, func(request *codersdk.CreateWorkspaceRequest) {
-			request.RichParameterValues = []codersdk.WorkspaceBuildParameter{
-				{Name: "param1", Value: "value1b"},
-				{Name: codersdk.AITaskPromptParameterName, Value: "value2b"},
-			}
-		})
-		coderdtest.AwaitWorkspaceBuildJobCompleted(t, memberClient, workspace2.LatestBuild.ID)
-
-		workspace3 := coderdtest.CreateWorkspace(t, adminClient, template.ID, func(request *codersdk.CreateWorkspaceRequest) {
-			request.RichParameterValues = []codersdk.WorkspaceBuildParameter{
-				{Name: "param1", Value: "value1c"},
-				{Name: codersdk.AITaskPromptParameterName, Value: "value2c"},
-			}
-		})
-		coderdtest.AwaitWorkspaceBuildJobCompleted(t, adminClient, workspace3.LatestBuild.ID)
-		allBuildIDs := []uuid.UUID{workspace1.LatestBuild.ID, workspace2.LatestBuild.ID, workspace3.LatestBuild.ID}
-
-		experimentalMemberClient := codersdk.NewExperimentalClient(memberClient)
-		// Test parameters endpoint as member
-		prompts, err := experimentalMemberClient.AITaskPrompts(ctx, allBuildIDs)
-		require.NoError(t, err)
-		// we expect 2 prompts because the member client does not have access to workspace3
-		// since it was created by the admin client
-		require.Len(t, prompts.Prompts, 2)
-
-		// Check workspace1 parameters
-		build1Prompt := prompts.Prompts[workspace1.LatestBuild.ID.String()]
-		require.Equal(t, "value2a", build1Prompt)
-
-		// Check workspace2 parameters
-		build2Prompt := prompts.Prompts[workspace2.LatestBuild.ID.String()]
-		require.Equal(t, "value2b", build2Prompt)
-
-		experimentalAdminClient := codersdk.NewExperimentalClient(adminClient)
-		// Test parameters endpoint as admin
-		// we expect 3 prompts because the admin client has access to all workspaces
-		prompts, err = experimentalAdminClient.AITaskPrompts(ctx, allBuildIDs)
-		require.NoError(t, err)
-		require.Len(t, prompts.Prompts, 3)
-
-		// Check workspace3 parameters
-		build3Prompt := prompts.Prompts[workspace3.LatestBuild.ID.String()]
-		require.Equal(t, "value2c", build3Prompt)
-	})
-
-	t.Run("NonExistentBuildIDs", func(t *testing.T) {
-		t.Parallel()
-		client := coderdtest.New(t, &coderdtest.Options{})
-		_ = coderdtest.CreateFirstUser(t, client)
-
-		ctx := testutil.Context(t, testutil.WaitShort)
-
-		// Test with non-existent build IDs
-		nonExistentID := uuid.New()
-		experimentalClient := codersdk.NewExperimentalClient(client)
-		prompts, err := experimentalClient.AITaskPrompts(ctx, []uuid.UUID{nonExistentID})
-		require.NoError(t, err)
-		require.Empty(t, prompts.Prompts)
-	})
-}
 
 func TestTasks(t *testing.T) {
 	t.Parallel()
@@ -188,7 +63,6 @@ func TestTasks(t *testing.T) {
 				{
 					Type: &proto.Response_Plan{
 						Plan: &proto.PlanComplete{
-							Parameters: []*proto.RichParameter{{Name: codersdk.AITaskPromptParameterName, Type: "string"}},
 							HasAiTasks: true,
 						},
 					},
@@ -259,6 +133,9 @@ func TestTasks(t *testing.T) {
 		// Wait for the workspace to be built.
 		workspace, err := client.Workspace(ctx, task.WorkspaceID.UUID)
 		require.NoError(t, err)
+		if assert.True(t, workspace.TaskID.Valid, "task id should be set on workspace") {
+			assert.Equal(t, task.ID, workspace.TaskID.UUID, "workspace task id should match")
+		}
 		coderdtest.AwaitWorkspaceBuildJobCompleted(t, client, workspace.LatestBuild.ID)
 
 		// List tasks via experimental API and verify the prompt and status mapping.
@@ -279,12 +156,13 @@ func TestTasks(t *testing.T) {
 		t.Parallel()
 
 		var (
-			client, db = coderdtest.NewWithDatabase(t, &coderdtest.Options{IncludeProvisionerDaemon: true})
-			ctx        = testutil.Context(t, testutil.WaitLong)
-			user       = coderdtest.CreateFirstUser(t, client)
-			template   = createAITemplate(t, client, user)
-			wantPrompt = "review my code"
-			exp        = codersdk.NewExperimentalClient(client)
+			client, db     = coderdtest.NewWithDatabase(t, &coderdtest.Options{IncludeProvisionerDaemon: true})
+			ctx            = testutil.Context(t, testutil.WaitLong)
+			user           = coderdtest.CreateFirstUser(t, client)
+			anotherUser, _ = coderdtest.CreateAnotherUser(t, client, user.OrganizationID)
+			template       = createAITemplate(t, client, user)
+			wantPrompt     = "review my code"
+			exp            = codersdk.NewExperimentalClient(client)
 		)
 
 		task, err := exp.CreateTask(ctx, "me", codersdk.CreateTaskRequest{
@@ -297,6 +175,9 @@ func TestTasks(t *testing.T) {
 		// Get the workspace and wait for it to be ready.
 		ws, err := client.Workspace(ctx, task.WorkspaceID.UUID)
 		require.NoError(t, err)
+		if assert.True(t, ws.TaskID.Valid, "task id should be set on workspace") {
+			assert.Equal(t, task.ID, ws.TaskID.UUID, "workspace task id should match")
+		}
 		coderdtest.AwaitWorkspaceBuildJobCompleted(t, client, ws.LatestBuild.ID)
 		ws = coderdtest.MustWorkspace(t, client, task.WorkspaceID.UUID)
 		// Assert invariant: the workspace has exactly one resource with one agent with one app.
@@ -330,6 +211,24 @@ func TestTasks(t *testing.T) {
 		assert.Equal(t, agentID, updated.WorkspaceAgentID.UUID, "workspace agent id should match")
 		assert.Equal(t, taskAppID, updated.WorkspaceAppID.UUID, "workspace app id should match")
 		assert.NotEmpty(t, updated.WorkspaceStatus, "task status should not be empty")
+
+		// Fetch the task by name and verify the same result
+		byName, err := exp.TaskByOwnerAndName(ctx, codersdk.Me, task.Name)
+		require.NoError(t, err)
+		require.Equal(t, byName, updated)
+
+		// Another member user should not be able to fetch the task
+		otherClient := codersdk.NewExperimentalClient(anotherUser)
+		_, err = otherClient.TaskByID(ctx, task.ID)
+		require.Error(t, err, "fetching task should fail by ID for another member user")
+		var sdkErr *codersdk.Error
+		require.ErrorAs(t, err, &sdkErr)
+		require.Equal(t, http.StatusNotFound, sdkErr.StatusCode())
+		// Also test by name
+		_, err = otherClient.TaskByOwnerAndName(ctx, task.OwnerName, task.Name)
+		require.Error(t, err, "fetching task should fail by name for another member user")
+		require.ErrorAs(t, err, &sdkErr)
+		require.Equal(t, http.StatusNotFound, sdkErr.StatusCode())
 
 		// Stop the workspace
 		coderdtest.MustTransitionWorkspace(t, client, task.WorkspaceID.UUID, codersdk.WorkspaceTransitionStart, codersdk.WorkspaceTransitionStop)
@@ -371,6 +270,9 @@ func TestTasks(t *testing.T) {
 			require.True(t, task.WorkspaceID.Valid, "task should have a workspace ID")
 			ws, err := client.Workspace(ctx, task.WorkspaceID.UUID)
 			require.NoError(t, err)
+			if assert.True(t, ws.TaskID.Valid, "task id should be set on workspace") {
+				assert.Equal(t, task.ID, ws.TaskID.UUID, "workspace task id should match")
+			}
 			coderdtest.AwaitWorkspaceBuildJobCompleted(t, client, ws.LatestBuild.ID)
 
 			err = exp.DeleteTask(ctx, "me", task.ID)
@@ -417,6 +319,9 @@ func TestTasks(t *testing.T) {
 			coderdtest.AwaitTemplateVersionJobCompleted(t, client, version.ID)
 			template := coderdtest.CreateTemplate(t, client, user.OrganizationID, version.ID)
 			ws := coderdtest.CreateWorkspace(t, client, template.ID)
+			if assert.False(t, ws.TaskID.Valid, "task id should not be set on non-task workspace") {
+				assert.Zero(t, ws.TaskID, "non-task workspace task id should be empty")
+			}
 			coderdtest.AwaitWorkspaceBuildJobCompleted(t, client, ws.LatestBuild.ID)
 
 			exp := codersdk.NewExperimentalClient(client)
@@ -466,10 +371,10 @@ func TestTasks(t *testing.T) {
 			}
 		})
 
-		t.Run("NoWorkspace", func(t *testing.T) {
+		t.Run("DeletedWorkspace", func(t *testing.T) {
 			t.Parallel()
 
-			client := coderdtest.New(t, &coderdtest.Options{IncludeProvisionerDaemon: true})
+			client, db := coderdtest.NewWithDatabase(t, &coderdtest.Options{IncludeProvisionerDaemon: true})
 			user := coderdtest.CreateFirstUser(t, client)
 			template := createAITemplate(t, client, user)
 			ctx := testutil.Context(t, testutil.WaitLong)
@@ -483,13 +388,53 @@ func TestTasks(t *testing.T) {
 			ws, err := client.Workspace(ctx, task.WorkspaceID.UUID)
 			require.NoError(t, err)
 			coderdtest.AwaitWorkspaceBuildJobCompleted(t, client, ws.LatestBuild.ID)
-			// Delete the task workspace
-			coderdtest.MustTransitionWorkspace(t, client, ws.ID, codersdk.WorkspaceTransitionStart, codersdk.WorkspaceTransitionDelete)
-			// We should still be able to fetch the task after deleting its workspace
+
+			// Mark the workspace as deleted directly in the database, bypassing provisionerd.
+			require.NoError(t, db.UpdateWorkspaceDeletedByID(dbauthz.AsProvisionerd(ctx), database.UpdateWorkspaceDeletedByIDParams{
+				ID:      ws.ID,
+				Deleted: true,
+			}))
+			// We should still be able to fetch the task if its workspace was deleted.
+			// Provisionerdserver will attempt delete the related task when deleting a workspace.
+			// This test ensures that we can still handle the case where, for some reason, the
+			// task has not been marked as deleted, but the workspace has.
 			task, err = exp.TaskByID(ctx, task.ID)
-			require.NoError(t, err, "fetching a task should still work after deleting its related workspace")
+			require.NoError(t, err, "fetching a task should still work if its related workspace is deleted")
 			err = exp.DeleteTask(ctx, task.OwnerID.String(), task.ID)
 			require.NoError(t, err, "should be possible to delete a task with no workspace")
+		})
+
+		t.Run("DeletingTaskWorkspaceDeletesTask", func(t *testing.T) {
+			t.Parallel()
+
+			client := coderdtest.New(t, &coderdtest.Options{IncludeProvisionerDaemon: true})
+			user := coderdtest.CreateFirstUser(t, client)
+			template := createAITemplate(t, client, user)
+
+			ctx := testutil.Context(t, testutil.WaitLong)
+
+			exp := codersdk.NewExperimentalClient(client)
+			task, err := exp.CreateTask(ctx, "me", codersdk.CreateTaskRequest{
+				TemplateVersionID: template.ActiveVersionID,
+				Input:             "delete me",
+			})
+			require.NoError(t, err)
+			require.True(t, task.WorkspaceID.Valid, "task should have a workspace ID")
+			ws, err := client.Workspace(ctx, task.WorkspaceID.UUID)
+			require.NoError(t, err)
+			if assert.True(t, ws.TaskID.Valid, "task id should be set on workspace") {
+				assert.Equal(t, task.ID, ws.TaskID.UUID, "workspace task id should match")
+			}
+			coderdtest.AwaitWorkspaceBuildJobCompleted(t, client, ws.LatestBuild.ID)
+
+			// When; the task workspace is deleted
+			coderdtest.MustTransitionWorkspace(t, client, ws.ID, codersdk.WorkspaceTransitionStart, codersdk.WorkspaceTransitionDelete)
+			// Then: the task associated with the workspace is also deleted
+			_, err = exp.TaskByID(ctx, task.ID)
+			require.Error(t, err, "expected an error fetching the task")
+			var sdkErr *codersdk.Error
+			require.ErrorAs(t, err, &sdkErr, "expected a codersdk.Error")
+			require.Equal(t, http.StatusNotFound, sdkErr.StatusCode())
 		})
 	})
 
@@ -728,7 +673,7 @@ func TestTasks(t *testing.T) {
 		coderdtest.AwaitWorkspaceBuildJobCompleted(t, client, ws.LatestBuild.ID)
 
 		// Fetch the task by ID via experimental API and verify fields.
-		task, err = exp.TaskByID(ctx, task.ID)
+		task, err = exp.TaskByIdentifier(ctx, task.ID.String())
 		require.NoError(t, err)
 		require.NotZero(t, task.WorkspaceBuildNumber)
 		require.True(t, task.WorkspaceAgentID.Valid)
@@ -794,6 +739,51 @@ func TestTasksCreate(t *testing.T) {
 	t.Parallel()
 
 	t.Run("OK", func(t *testing.T) {
+		t.Parallel()
+
+		var (
+			ctx = testutil.Context(t, testutil.WaitShort)
+
+			taskPrompt = "Some task prompt"
+		)
+
+		client := coderdtest.New(t, &coderdtest.Options{IncludeProvisionerDaemon: true})
+		user := coderdtest.CreateFirstUser(t, client)
+
+		version := coderdtest.CreateTemplateVersion(t, client, user.OrganizationID, &echo.Responses{
+			Parse:          echo.ParseComplete,
+			ProvisionApply: echo.ApplyComplete,
+			ProvisionPlan: []*proto.Response{
+				{Type: &proto.Response_Plan{Plan: &proto.PlanComplete{
+					HasAiTasks: true,
+				}}},
+			},
+		})
+		coderdtest.AwaitTemplateVersionJobCompleted(t, client, version.ID)
+		template := coderdtest.CreateTemplate(t, client, user.OrganizationID, version.ID)
+
+		expClient := codersdk.NewExperimentalClient(client)
+
+		task, err := expClient.CreateTask(ctx, "me", codersdk.CreateTaskRequest{
+			TemplateVersionID: template.ActiveVersionID,
+			Input:             taskPrompt,
+		})
+		require.NoError(t, err)
+		require.True(t, task.WorkspaceID.Valid)
+
+		ws, err := client.Workspace(ctx, task.WorkspaceID.UUID)
+		require.NoError(t, err)
+		coderdtest.AwaitWorkspaceBuildJobCompleted(t, client, ws.LatestBuild.ID)
+
+		assert.NotEmpty(t, task.Name)
+		assert.Equal(t, template.ID, task.TemplateID)
+
+		parameters, err := client.WorkspaceBuildParameters(ctx, ws.LatestBuild.ID)
+		require.NoError(t, err)
+		require.Len(t, parameters, 0)
+	})
+
+	t.Run("OK AIPromptBackCompat", func(t *testing.T) {
 		t.Parallel()
 
 		var (
@@ -884,7 +874,6 @@ func TestTasksCreate(t *testing.T) {
 						ProvisionApply: echo.ApplyComplete,
 						ProvisionPlan: []*proto.Response{
 							{Type: &proto.Response_Plan{Plan: &proto.PlanComplete{
-								Parameters: []*proto.RichParameter{{Name: codersdk.AITaskPromptParameterName, Type: "string"}},
 								HasAiTasks: true,
 							}}},
 						},
@@ -1000,7 +989,6 @@ func TestTasksCreate(t *testing.T) {
 			ProvisionApply: echo.ApplyComplete,
 			ProvisionPlan: []*proto.Response{
 				{Type: &proto.Response_Plan{Plan: &proto.PlanComplete{
-					Parameters: []*proto.RichParameter{{Name: codersdk.AITaskPromptParameterName, Type: "string"}},
 					HasAiTasks: true,
 				}}},
 			},
@@ -1060,7 +1048,6 @@ func TestTasksCreate(t *testing.T) {
 			ProvisionApply: echo.ApplyComplete,
 			ProvisionPlan: []*proto.Response{
 				{Type: &proto.Response_Plan{Plan: &proto.PlanComplete{
-					Parameters: []*proto.RichParameter{{Name: codersdk.AITaskPromptParameterName, Type: "string"}},
 					HasAiTasks: true,
 				}}},
 			},
@@ -1097,7 +1084,6 @@ func TestTasksCreate(t *testing.T) {
 			ProvisionApply: echo.ApplyComplete,
 			ProvisionPlan: []*proto.Response{
 				{Type: &proto.Response_Plan{Plan: &proto.PlanComplete{
-					Parameters: []*proto.RichParameter{{Name: codersdk.AITaskPromptParameterName, Type: "string"}},
 					HasAiTasks: true,
 				}}},
 			},
@@ -1150,7 +1136,6 @@ func TestTasksCreate(t *testing.T) {
 			ProvisionApply: echo.ApplyComplete,
 			ProvisionPlan: []*proto.Response{
 				{Type: &proto.Response_Plan{Plan: &proto.PlanComplete{
-					Parameters: []*proto.RichParameter{{Name: codersdk.AITaskPromptParameterName, Type: "string"}},
 					HasAiTasks: true,
 				}}},
 			},
@@ -1163,7 +1148,6 @@ func TestTasksCreate(t *testing.T) {
 			ProvisionApply: echo.ApplyComplete,
 			ProvisionPlan: []*proto.Response{
 				{Type: &proto.Response_Plan{Plan: &proto.PlanComplete{
-					Parameters: []*proto.RichParameter{{Name: codersdk.AITaskPromptParameterName, Type: "string"}},
 					HasAiTasks: true,
 				}}},
 			},
@@ -1357,31 +1341,31 @@ func TestTasksNotification(t *testing.T) {
 			// Given: a workspace build with an agent containing an App
 			workspaceAgentAppID := uuid.New()
 			workspaceBuildID := uuid.New()
-			workspaceBuildSeed := database.WorkspaceBuild{
-				ID: workspaceBuildID,
-			}
-			if tc.isAITask {
-				workspaceBuildSeed = database.WorkspaceBuild{
-					ID: workspaceBuildID,
-					// AI Task configuration
-					HasAITask:          sql.NullBool{Bool: true, Valid: true},
-					AITaskSidebarAppID: uuid.NullUUID{UUID: workspaceAgentAppID, Valid: true},
-				}
-			}
-			workspaceBuild := dbfake.WorkspaceBuild(t, db, database.WorkspaceTable{
+			workspaceBuilder := dbfake.WorkspaceBuild(t, db, database.WorkspaceTable{
 				OrganizationID: ownerUser.OrganizationID,
 				OwnerID:        memberUser.ID,
-			}).Seed(workspaceBuildSeed).Params(database.WorkspaceBuildParameter{
-				WorkspaceBuildID: workspaceBuildID,
-				Name:             codersdk.AITaskPromptParameterName,
-				Value:            tc.taskPrompt,
-			}).WithAgent(func(agent []*proto.Agent) []*proto.Agent {
-				agent[0].Apps = []*proto.App{{
-					Id:   workspaceAgentAppID.String(),
-					Slug: "ccw",
-				}}
-				return agent
-			}).Do()
+			}).Seed(database.WorkspaceBuild{
+				ID: workspaceBuildID,
+			})
+			if tc.isAITask {
+				workspaceBuilder = workspaceBuilder.
+					WithTask(database.TaskTable{
+						Prompt: tc.taskPrompt,
+					}, &proto.App{
+						Id:   workspaceAgentAppID.String(),
+						Slug: "ccw",
+					})
+			} else {
+				workspaceBuilder = workspaceBuilder.
+					WithAgent(func(agent []*proto.Agent) []*proto.Agent {
+						agent[0].Apps = []*proto.App{{
+							Id:   workspaceAgentAppID.String(),
+							Slug: "ccw",
+						}}
+						return agent
+					})
+			}
+			workspaceBuild := workspaceBuilder.Do()
 
 			// Given: the workspace agent app has previous statuses
 			agentClient := agentsdk.New(client.URL, agentsdk.WithFixedToken(workspaceBuild.AgentToken))
@@ -1422,13 +1406,7 @@ func TestTasksNotification(t *testing.T) {
 				require.Len(t, sent, 1)
 				require.Equal(t, memberUser.ID, sent[0].UserID)
 				require.Len(t, sent[0].Labels, 2)
-				// NOTE: len(string) is the number of bytes in the string, not the number of runes.
-				require.LessOrEqual(t, utf8.RuneCountInString(sent[0].Labels["task"]), 160)
-				if len(tc.taskPrompt) > 160 {
-					require.Contains(t, tc.taskPrompt, strings.TrimSuffix(sent[0].Labels["task"], "…"))
-				} else {
-					require.Equal(t, tc.taskPrompt, sent[0].Labels["task"])
-				}
+				require.Equal(t, workspaceBuild.Task.Name, sent[0].Labels["task"])
 				require.Equal(t, workspace.Name, sent[0].Labels["workspace"])
 			} else {
 				// Then: No notification is sent

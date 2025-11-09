@@ -396,11 +396,6 @@
 									"title": "Up to 3,000 Users",
 									"description": "Enterprise-scale architecture recommendations for Coder deployments that support up to 3,000 users",
 									"path": "./admin/infrastructure/validated-architectures/3k-users.md"
-								},
-								{
-									"title": "Up to 10,000 Users",
-									"description": "Enterprise-scale architecture recommendations for Coder deployments that support up to 10,000 users",
-									"path": "./admin/infrastructure/validated-architectures/10k-users.md"
 								}
 							]
 						},
@@ -436,6 +431,11 @@
 									"title": "Google",
 									"description": "Configure Google as an OIDC provider",
 									"path": "./admin/users/oidc-auth/google.md"
+								},
+								{
+									"title": "Microsoft",
+									"description": "Configure Microsoft Entra ID as an OIDC provider",
+									"path": "./admin/users/oidc-auth/microsoft.md"
 								},
 								{
 									"title": "Configure OIDC refresh tokens",
@@ -1181,6 +1181,21 @@
 					"icon_path": "./images/icons/terminal.svg",
 					"children": [
 						{
+							"title": "aibridge",
+							"description": "Manage AIBridge.",
+							"path": "reference/cli/aibridge.md"
+						},
+						{
+							"title": "aibridge interceptions",
+							"description": "Manage AIBridge interceptions.",
+							"path": "reference/cli/aibridge_interceptions.md"
+						},
+						{
+							"title": "aibridge interceptions list",
+							"description": "List AIBridge interceptions as JSON.",
+							"path": "reference/cli/aibridge_interceptions_list.md"
+						},
+						{
 							"title": "autoupdate",
 							"description": "Toggle auto-update policy for a workspace",
 							"path": "reference/cli/autoupdate.md"
@@ -1797,6 +1812,11 @@
 							"title": "tokens remove",
 							"description": "Delete a token",
 							"path": "reference/cli/tokens_remove.md"
+						},
+						{
+							"title": "tokens view",
+							"description": "Display detailed information about a token",
+							"path": "reference/cli/tokens_view.md"
 						},
 						{
 							"title": "unfavorite",
